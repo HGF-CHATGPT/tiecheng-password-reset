@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; connect-src https://numuklpdlzkzkkxwhlqe.supabase.co; img-src 'self' data:; base-uri 'none'; form-action 'self'">
+    <title>重置密码 - 铁城中学日常管理工具</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.8/dist/umd/supabase.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: #243447;
+            background: linear-gradient(135deg, #4a90d9 0%, #285f9d 100%);
+            font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+        }
+        .card {
+            width: 100%;
+            max-width: 440px;
+            padding: 38px 34px;
+            border-radius: 14px;
+            background: #fff;
+            box-shadow: 0 16px 48px rgba(15, 40, 70, 0.24);
+        }
+        h1 { margin: 0 0 8px; text-align: center; font-size: 24px; }
+        .subtitle { margin: 0 0 28px; text-align: center; color: #718096; font-size: 13px; }
+        .form-group { margin-bottom: 18px; }
+        label { display: block; margin-bottom: 7px; font-size: 14px; font-weight: 600; }
+        input {
+            width: 100%;
+            height: 46px;
+            padding: 0 13px;
+            border: 1px solid #cfd8e3;
+            border-radius: 7px;
+            font: inherit;
+            outline: none;
+        }
+        input:focus { border-color: #377fc4; box-shadow: 0 0 0 3px rgba(55, 127, 196, 0.14); }
+        button {
+            width: 100%;
+            height: 46px;
+            border: 0;
+            border-radius: 7px;
+            color: #fff;
+            background: #377fc4;
+            font: 600 15px inherit;
+            cursor: pointer;
+        }
+        button:hover { background: #286aa9; }
+        button:disabled { background: #aeb9c5; cursor: not-allowed; }
+        .hint { margin-top: 7px; color: #718096; font-size: 12px; line-height: 1.6; }
+        .status { padding: 18px 0; text-align: center; color: #65758b; font-size: 14px; }
+        .message { display: none; margin-bottom: 18px; padding: 12px 14px; border-radius: 7px; font-size: 13px; line-height: 1.6; }
+        .message.error { display: block; color: #a52828; background: #fff0f0; border: 1px solid #f0b6b6; }
+        .message.success { display: block; color: #176b3a; background: #edf9f1; border: 1px solid #acdabb; }
+        .done { text-align: center; padding: 12px 0 4px; }
+        .done-icon { margin-bottom: 12px; font-size: 46px; }
+        .done-title { margin-bottom: 8px; font-size: 18px; font-weight: 600; }
+        .done-text { color: #718096; font-size: 13px; line-height: 1.7; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <main class="card">
+        <h1>重置密码</h1>
+        <p class="subtitle">铁城中学日常管理工具</p>
+        <div id="message" class="message" role="alert" aria-live="polite"></div>
+        <div id="loading" class="status">正在验证重置链接，请稍候……</div>
+        <form id="resetForm" class="hidden" novalidate>
+            <div class="form-group">
+                <label for="newPassword">新密码</label>
+                <input type="password" id="newPassword" autocomplete="new-password" required minlength="8">
+                <div class="hint">至少 8 位，并同时包含大写字母、小写字母、数字和特殊字符。</div>
+            </div>
+            <div class="form-group">
+                <label for="confirmPassword">确认新密码</label>
+                <input type="password" id="confirmPassword" autocomplete="new-password" required minlength="8">
+            </div>
+            <button type="submit" id="submitBtn">确认重置</button>
+        </form>
+        <section id="doneMessage" class="done hidden" aria-live="polite">
+            <div class="done-icon">✅</div>
+            <div class="done-title">密码重置成功</div>
+            <div class="done-text">本次恢复会话已安全退出。请关闭此页面，返回工具并使用新密码登录。</div>
+        </section>
+    </main>
+
+    <script>
+        'use strict';
+
+        const SUPABASE_URL = 'https://numuklpdlzkzkkxwhlqe.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_7JonBxGK2un-23DVW5b2pw_uw8UQ3on';
+        const messageEl = document.getElementById('message');
+        const loadingEl = document.getElementById('loading');
+        const formEl = document.getElementById('resetForm');
+        const doneEl = document.getElementById('doneMessage');
+        const submitBtn = document.getElementById('submitBtn');
+
+        let authClient = null;
+        let recoveryReady = false;
+
+        function showMessage(text, type = 'error') {
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+        }
+
+        function hideMessage() {
+            messageEl.textContent = '';
+            messageEl.className = 'message';
+        }
+
+        function finishLoading() {
+            loadingEl.classList.add('hidden');
+        }
+
+        function showResetForm() {
+            recoveryReady = true;
+            finishLoading();
+            hideMessage();
+            formEl.classList.remove('hidden');
+            document.getElementById('newPassword').focus();
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        function friendlyError(error) {
+            const detail = String(error && error.message ? error.message : error || '').toLowerCase();
+            if (detail.includes('expired') || detail.includes('invalid') || detail.includes('otp')) {
+                return '重置链接已失效或已过期，请返回工具重新申请密码重置邮件。';
+            }
+            if (detail.includes('pkce') || detail.includes('code verifier')) {
+                return '当前恢复链接无法在此浏览器完成验证，请返回工具重新申请密码重置邮件。';
+            }
+            return '重置链接验证失败，请返回工具重新申请密码重置邮件。';
+        }
+
+        async function establishRecoverySession() {
+            const query = new URLSearchParams(window.location.search);
+            const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+            const providerError = query.get('error_description') || hash.get('error_description');
+            if (providerError) {
+                throw new Error(providerError);
+            }
+
+            const recoveryType = query.get('type') || hash.get('type');
+            if (recoveryType && recoveryType !== 'recovery') {
+                throw new Error('invalid recovery type');
+            }
+
+            const accessToken = hash.get('access_token');
+            const refreshToken = hash.get('refresh_token');
+            if (accessToken && refreshToken) {
+                const { data, error } = await authClient.auth.setSession({
+                    access_token: accessToken,
+                    refresh_token: refreshToken
+                });
+                if (error) throw error;
+                return data.session;
+            }
+
+            const tokenHash = query.get('token_hash');
+            if (tokenHash) {
+                const { data, error } = await authClient.auth.verifyOtp({
+                    token_hash: tokenHash,
+                    type: 'recovery'
+                });
+                if (error) throw error;
+                return data.session;
+            }
+
+            const code = query.get('code');
+            if (code) {
+                const { data, error } = await authClient.auth.exchangeCodeForSession(code);
+                if (error) throw error;
+                return data.session;
+            }
+
+            const { data, error } = await authClient.auth.getSession();
+            if (error) throw error;
+            return data.session;
+        }
+
+        async function init() {
+            try {
+                if (!window.supabase || !window.supabase.createClient) {
+                    throw new Error('页面组件加载失败');
+                }
+                if (!SUPABASE_ANON_KEY || !SUPABASE_ANON_KEY.startsWith('sb_publishable_')) {
+                    finishLoading();
+                    showMessage('密码重置页面尚未完成管理员配置，请联系管理员。');
+                    return;
+                }
+                authClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+                    auth: { detectSessionInUrl: false, persistSession: false, autoRefreshToken: false }
+                });
+                const session = await establishRecoverySession();
+                if (!session) {
+                    throw new Error('invalid recovery session');
+                }
+                showResetForm();
+            } catch (error) {
+                finishLoading();
+                showMessage(friendlyError(error));
+            }
+        }
+
+        formEl.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            hideMessage();
+            if (!recoveryReady || !authClient) {
+                showMessage('重置会话尚未就绪，请重新打开邮件中的链接。');
+                return;
+            }
+
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            if (newPassword !== confirmPassword) {
+                showMessage('两次输入的密码不一致，请重新输入。');
+                return;
+            }
+            if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(newPassword)) {
+                showMessage('新密码至少 8 位，并需同时包含大写字母、小写字母、数字和特殊字符。');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = '正在提交……';
+            try {
+                const { error } = await authClient.auth.updateUser({ password: newPassword });
+                if (error) throw error;
+                await authClient.auth.signOut({ scope: 'local' });
+                formEl.classList.add('hidden');
+                doneEl.classList.remove('hidden');
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } catch (error) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '确认重置';
+                showMessage(`密码重置失败：${error && error.message ? error.message : '请稍后重试。'}`);
+            }
+        });
+
+        init();
+    </script>
+</body>
+</html>
