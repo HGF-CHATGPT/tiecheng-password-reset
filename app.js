@@ -37,6 +37,9 @@ function showResetForm() {
 function friendlyError(error) {
     const code = String(error && error.code ? error.code : '').toLowerCase();
     const detail = String(error && error.message ? error.message : error || '').toLowerCase();
+    if (detail.includes('expired') && detail.includes('invalid')) {
+        return '重置链接无效、已使用或已过期，请返回工具重新申请密码重置邮件。';
+    }
     if (code.includes('expired') || detail.includes('expired')) {
         return '重置链接已过期，请返回工具重新申请密码重置邮件。';
     }
