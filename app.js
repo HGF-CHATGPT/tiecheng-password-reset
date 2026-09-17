@@ -35,12 +35,25 @@ function showResetForm() {
 }
 
 function friendlyError(error) {
+    const code = String(error && error.code ? error.code : '').toLowerCase();
     const detail = String(error && error.message ? error.message : error || '').toLowerCase();
-    if (detail.includes('expired') || detail.includes('invalid') || detail.includes('otp')) {
-        return '重置链接已失效或已过期，请返回工具重新申请密码重置邮件。';
+    if (code.includes('expired') || detail.includes('expired')) {
+        return '重置链接已过期，请返回工具重新申请密码重置邮件。';
+    }
+    if (
+        code.includes('otp') ||
+        code.includes('invalid') ||
+        detail.includes('invalid') ||
+        detail.includes('otp') ||
+        detail.includes('already been used')
+    ) {
+        return '重置链接无效或已使用，请返回工具重新申请密码重置邮件。';
     }
     if (detail.includes('pkce') || detail.includes('code verifier')) {
         return '当前恢复链接无法在此浏览器完成验证，请返回工具重新申请密码重置邮件。';
+    }
+    if (detail.includes('fetch') || detail.includes('network')) {
+        return '无法连接账号服务，请检查网络后重新打开邮件中的链接。';
     }
     return '重置链接验证失败，请返回工具重新申请密码重置邮件。';
 }
@@ -58,22 +71,25 @@ async function establishRecoverySession() {
         throw new Error('invalid recovery type');
     }
 
+    // 新恢复邮件使用 token_hash。邮件扫描器访问静态页时不会先经过
+    // Supabase 的 GET 验证端点；只有此页面运行时才会通过 POST 验证令牌。
+    const tokenHash = query.get('token_hash');
+    if (tokenHash) {
+        const { data, error } = await authClient.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: 'recovery'
+        });
+        if (error) throw error;
+        return data.session;
+    }
+
+    // 保留旧版恢复邮件和 PKCE 链接兼容；新邮件不再依赖这些分支。
     const accessToken = hash.get('access_token');
     const refreshToken = hash.get('refresh_token');
     if (accessToken && refreshToken) {
         const { data, error } = await authClient.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken
-        });
-        if (error) throw error;
-        return data.session;
-    }
-
-    const tokenHash = query.get('token_hash');
-    if (tokenHash) {
-        const { data, error } = await authClient.auth.verifyOtp({
-            token_hash: tokenHash,
-            type: 'recovery'
         });
         if (error) throw error;
         return data.session;
